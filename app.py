@@ -2,12 +2,9 @@ import os
 import tempfile
 import requests
 from flask import Flask, request, jsonify
-from docling.document_converter import DocumentConverter
+import pypdfium2 as pdfium
 
 app = Flask(__name__)
-
-# Initialize converter once at startup
-converter = DocumentConverter()
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -36,26 +33,20 @@ def extract():
         tmp.write(response.content)
         tmp_path = tmp.name
 
-    # Extract with Docling
+    # Extract text with pypdfium2
     try:
-        result = converter.convert(tmp_path)
-        markdown_output = result.document.export_to_markdown()
-
-        # Extract tables
-        tables = []
-        for table in result.document.tables:
-            try:
-                rows = [[cell.text for cell in row.cells] for row in table.data.grid]
-                tables.append({
-                    "page": table.prov[0].page_no if table.prov else None,
-                    "rows": rows
-                })
-            except Exception:
-                pass
-
+        pdf = pdfium.PdfDocument(tmp_path)
+        pages_text = []
+        for i in range(len(pdf)):
+            page = pdf[i]
+            textpage = page.get_textpage()
+            pages_text.append(textpage.get_text_range())
+        markdown_output = "\n\n".join(pages_text)
+        page_count = len(pdf)
+        pdf.close()
     except Exception as e:
         os.unlink(tmp_path)
-        return jsonify({"error": f"Docling extraction failed: {str(e)}"}), 500
+        return jsonify({"error": f"PDF extraction failed: {str(e)}"}), 500
 
     os.unlink(tmp_path)
 
@@ -68,8 +59,9 @@ def extract():
         "title": data.get('title', ''),
         "published_date": data.get('published_date', ''),
         "markdown": markdown_output,
-        "tables": tables,
-        "extraction_engine": "docling"
+        "page_count": page_count,
+        "tables": [],
+        "extraction_engine": "pypdfium2"
     })
 
 if __name__ == '__main__':
